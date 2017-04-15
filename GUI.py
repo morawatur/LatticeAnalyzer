@@ -27,7 +27,8 @@ class LabelWithLabel(QtGui.QWidget):
 
     def initUI(self):
         self.labelsLabel.setStyleSheet('font-size:10pt;')
-        self.label.setStyleSheet('font-size:16pt; background-color:white; border:1px solid rgb(0, 0, 0);')
+        self.label.setStyleSheet('font-size:16pt; background-color:white; border:1px solid rgb(0, 0, 0); text-align:center')
+        self.label.setAlignment(QtCore.Qt.AlignCenter)
 
         vbox = QtGui.QVBoxLayout()
         vbox.setMargin(0)
@@ -44,6 +45,8 @@ class PlotWidget(QtGui.QWidget):
         self.figure = plt.figure()
         self.canvas = FigureCanvas(self.figure)
         self.toolbar = NavigationToolbar(self.canvas, self)
+        self.markedPoint = None
+        self.markedPointData = [0, 0]
         self.canvas.mpl_connect('button_press_event', self.getXYDataOnClick)
 
         # self.button = QtGui.QPushButton('Plot FFT')
@@ -73,7 +76,10 @@ class PlotWidget(QtGui.QWidget):
         self.canvas.draw()
 
     def getXYDataOnClick(self, event):
-        self.parent().pointMarkedOnPlot = [event.xdata, event.ydata]
+        if self.markedPoint is not None:
+            self.markedPoint.remove()
+        self.markedPoint, = plt.plot(event.xdata, event.ydata, 'ro')
+        self.markedPointData = [event.xdata, event.ydata]
         # latConst = np.abs(1.0 / event.xdata)
         # self.parent().latConstLabel.label.setText('{0:.2f} A'.format(latConst))
         # print('Rec. dist. = {0:.2f} A^-1'.format(event.xdata))
@@ -97,7 +103,6 @@ class LatticeAnalyzerWidget(QtGui.QWidget):
         self.image = LoadImageSeriesFromFirstFile(imagePath)
         self.pointSets = []
         self.plotWidget = PlotWidget()
-        self.pointMarkedOnPlot = [0, 0]
         self.latConstLabel = LabelWithLabel(self, 'Lattice constant', '0.0 A')
         self.createPixmap()
         self.initUI()
@@ -271,7 +276,8 @@ class LatticeAnalyzerWidget(QtGui.QWidget):
         # file2.close()
 
     def getLatConst(self):
-        latConst = np.abs(1.0 / self.pointMarkedOnPlot[0])
+        recDist = self.plotWidget.markedPointData[0]
+        latConst = np.abs(1.0 / recDist)
         self.latConstLabel.label.setText('{0:.2f} A'.format(latConst))
 
     def clearImage(self):
