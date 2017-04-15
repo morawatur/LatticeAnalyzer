@@ -39,6 +39,29 @@ class LabelWithLabel(QtGui.QWidget):
 
 # --------------------------------------------------------
 
+class LabelExt(QtGui.QLabel):
+    def __init__(self, parent):
+        super(LabelExt, self).__init__(parent)
+
+    def paintEvent(self, event):
+        super(LabelExt, self).paintEvent(event)
+        # if len(self.pointSets) == 0 or len(self.pointSets[0]) == 0:
+        #    return
+        dotPen = QtGui.QPen(QtCore.Qt.red)
+        dotPen.setCapStyle(QtCore.Qt.RoundCap)
+        dotPen.setWidth(15)
+        qp = QtGui.QPainter()
+        qp.begin(self)
+        qp.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        qp.setPen(dotPen)
+        if len(self.parent().pointSets) > 0:
+            for pt in self.parent().pointSets[0]:
+                qpt = QtCore.QPoint(pt[0], pt[1])
+                qp.drawPoint(qpt)
+        qp.end()
+
+# --------------------------------------------------------
+
 class PlotWidget(QtGui.QWidget):
     def __init__(self, parent=None):
         super(PlotWidget, self).__init__(parent)
@@ -98,7 +121,8 @@ class PlotWidget(QtGui.QWidget):
 class LatticeAnalyzerWidget(QtGui.QWidget):
     def __init__(self):
         super(LatticeAnalyzerWidget, self).__init__()
-        self.display = QtGui.QLabel()
+        # self.display = QtGui.QLabel()
+        self.display = LabelExt(self)
         imagePath = QtGui.QFileDialog.getOpenFileName()
         self.image = LoadImageSeriesFromFirstFile(imagePath)
         self.pointSets = []
@@ -190,6 +214,7 @@ class LatticeAnalyzerWidget(QtGui.QWidget):
     # def mousePressEvent(self, QMouseEvent):
     #     print(QMouseEvent.pos())
 
+    # przeniesc mouseReleaseEvent do LabelExt?
     def mouseReleaseEvent(self, QMouseEvent):
         pos = QMouseEvent.pos()
         currPos = [pos.x(), pos.y()]
