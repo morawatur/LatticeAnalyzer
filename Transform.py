@@ -1,6 +1,7 @@
 import numpy as np
 import ImageSupport as imsup
 from skimage import transform as tr
+from scipy.stats import norm
 
 #-------------------------------------------------------------------
 
@@ -165,3 +166,17 @@ def RotatePoint(p1, angle):
     phi = np.angle(z1) + imsup.Radians(angle)
     p2 = [r * np.cos(phi), r * np.sin(phi)]
     return p2
+
+#-------------------------------------------------------------------
+
+def FindNextMaximaIndexes(arr, nMax, maskRange=10):
+    mu, std = norm.fit(arr)
+
+    maxIdxs = []
+    mrHalf = maskRange // 2
+    for m in range(nMax):
+        maxIdxs.append(np.argmax(arr))
+        arr[maxIdxs[m]-mrHalf:maxIdxs[m]+mrHalf] = 0.0
+    return maxIdxs
+
+

@@ -11,6 +11,82 @@ import ImageSupport as imsup
 import CrossCorr as cc
 import Transform as tr
 
+from matplotlib.backends.backend_qt4agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qt4agg import NavigationToolbar2QT as NavigationToolbar
+import matplotlib.pyplot as plt
+import random
+
+# --------------------------------------------------------
+
+class LabelWithLabel(QtGui.QWidget):
+    def __init__(self, parent, labText='Label', defaultValue=''):
+        super(LabelWithLabel, self).__init__(parent)
+        self.label = QtGui.QLabel(defaultValue)
+        self.labelsLabel = QtGui.QLabel(labText)
+        self.initUI()
+
+    def initUI(self):
+        self.labelsLabel.setStyleSheet('font-size:10pt;')
+        self.label.setStyleSheet('font-size:16pt; background-color:white; border:1px solid rgb(0, 0, 0);')
+
+        vbox = QtGui.QVBoxLayout()
+        vbox.setMargin(0)
+        vbox.setSpacing(0)
+        vbox.addWidget(self.labelsLabel)
+        vbox.addWidget(self.label)
+        self.setLayout(vbox)
+
+# --------------------------------------------------------
+
+class PlotWidget(QtGui.QWidget):
+    def __init__(self, parent=None):
+        super(PlotWidget, self).__init__(parent)
+        self.figure = plt.figure()
+        self.canvas = FigureCanvas(self.figure)
+        self.toolbar = NavigationToolbar(self.canvas, self)
+        self.canvas.mpl_connect('button_press_event', self.getXYDataOnClick)
+
+        # self.button = QtGui.QPushButton('Plot FFT')
+        # self.button.clicked.connect(self.plotRandom)
+
+        layout = QtGui.QVBoxLayout()
+        layout.addWidget(self.toolbar)
+        layout.addWidget(self.canvas)
+        # layout.addWidget(self.button)
+        self.setLayout(layout)
+
+    def plotRandom(self):
+        idxs = list(range(10))
+        data = [ random.random() for i in range(10) ]
+        self.figure.clear()
+        ax = self.figure.add_subplot(111)
+        ax.plot(idxs, data, '.-')
+        self.canvas.draw()
+
+    def plot(self, dataX, dataY, xlab='x', ylab='y'):
+        self.figure.clear()
+        plt.xlabel(xlab)
+        plt.ylabel(ylab)
+        plt.axis([ min(dataX)-0.5, max(dataX)+0.5, min(dataY)-0.5, max(dataY)+0.5 ])
+        ax = self.figure.add_subplot(111)
+        ax.plot(dataX, dataY, '.-')
+        self.canvas.draw()
+
+    def getXYDataOnClick(self, event):
+        self.parent().pointMarkedOnPlot = [event.xdata, event.ydata]
+        # latConst = np.abs(1.0 / event.xdata)
+        # self.parent().latConstLabel.label.setText('{0:.2f} A'.format(latConst))
+        # print('Rec. dist. = {0:.2f} A^-1'.format(event.xdata))
+        # print('Lattice constant = {0:.2f} A'.format(latConst))
+
+# --------------------------------------------------------
+
+# def RunPlotWindow():
+#     app = QtGui.QApplication(sys.argv)
+#     main = PlotWidget()
+#     main.show()
+#     sys.exit(app.exec_())
+
 # --------------------------------------------------------
 
 class LatticeAnalyzerWidget(QtGui.QWidget):
@@ -20,32 +96,54 @@ class LatticeAnalyzerWidget(QtGui.QWidget):
         imagePath = QtGui.QFileDialog.getOpenFileName()
         self.image = LoadImageSeriesFromFirstFile(imagePath)
         self.pointSets = []
+        self.plotWidget = PlotWidget()
+        self.pointMarkedOnPlot = [0, 0]
+        self.latConstLabel = LabelWithLabel(self, 'Lattice constant', '0.0 A')
         self.createPixmap()
         self.initUI()
 
     def initUI(self):
+        self.display.setFixedWidth(const.ccWidgetDim)
+        self.display.setFixedHeight(const.ccWidgetDim)
+        self.display.setAlignment(QtCore.Qt.AlignCenter)
+        # self.plotWidget.setFixedWidth(const.ccWidgetDim)
+        self.plotWidget.canvas.setFixedHeight(200)
+
         prevButton = QtGui.QPushButton('Prev', self)
         nextButton = QtGui.QPushButton('Next', self)
         clearButton = QtGui.QPushButton('Clear', self)
-        startButton = QtGui.QPushButton('Calculate', self)
+        startButton = QtGui.QPushButton('Start', self)      # Get freq. distribution (FFT)
+        getLatConstButton = QtGui.QPushButton('Get lattice constant', self)
 
         prevButton.clicked.connect(partial(self.changePixmap, False))
         nextButton.clicked.connect(partial(self.changePixmap, True))
         clearButton.clicked.connect(self.clearImage)
-        startButton.clicked.connect(self.calcHistogram)
+        startButton.clicked.connect(self.calcHistogramWithRotation)
+        getLatConstButton.clicked.connect(self.getLatConst)
+
+        self.latConstLabel.setFixedHeight(100)
 
         hbox_nav = QtGui.QHBoxLayout()
         hbox_nav.addWidget(prevButton)
         hbox_nav.addWidget(nextButton)
 
-        hbox_opt = QtGui.QHBoxLayout()
-        hbox_opt.addWidget(clearButton)
-        hbox_opt.addWidget(startButton)
+        vbox_opt = QtGui.QVBoxLayout()
+        vbox_opt.addWidget(clearButton)
+        vbox_opt.addWidget(startButton)
+        vbox_opt.addWidget(getLatConstButton)
+
+        vbox_panel = QtGui.QVBoxLayout()
+        vbox_panel.addLayout(hbox_nav)
+        vbox_panel.addLayout(vbox_opt)
+        vbox_panel.addWidget(self.latConstLabel)
+
+        hbox_disp_and_panel = QtGui.QHBoxLayout()
+        hbox_disp_and_panel.addWidget(self.display)
+        hbox_disp_and_panel.addLayout(vbox_panel)
 
         vbox_main = QtGui.QVBoxLayout()
-        vbox_main.addWidget(self.display)
-        vbox_main.addLayout(hbox_nav)
-        vbox_main.addLayout(hbox_opt)
+        vbox_main.addLayout(hbox_disp_and_panel)
+        vbox_main.addWidget(self.plotWidget)
         self.setLayout(vbox_main)
 
         # self.statusBar().showMessage('Ready')
@@ -103,49 +201,78 @@ class LatticeAnalyzerWidget(QtGui.QWidget):
             lab.move(currPos[0], currPos[1])
             lab.show()
 
-    def calcHistogram(self):
-        rectPoints = [ CalcRealCoords(const.dimSize, self.pointSets[0][pIdx]) for pIdx in range(3) ]
-        A = rectPoints[0]
-        B = rectPoints[1]
-        C = rectPoints[2]
-        D = [ A[0] + C[0] - B[0], A[1] + C[1] - B[1] ]
-        rectPoints.append(D)
-        for pt in rectPoints:
-            print(pt)
-
-        # A = [-10, -10]
-        # B = [-5, 10]
-        # C = [15, 8]
-        # D = [10, -12]
-
-        kAB = tr.Line(0, 0)
-        lBC = tr.Line(0, 0)
-        kCD = tr.Line(0, 0)
-        lAD = tr.Line(0, 0)
-
-        kAB.getFromPoints(A, B)
-        lBC.getFromPoints(B, C)
-        kCD.getFromPoints(C, D)
-        lAD.getFromPoints(A, D)
-
-        img = self.image
-        a = 0
-
-        for py in range(img.height):
-            for px in range(img.width):
-                pt = CalcNewCoords([px, py], [img.height // 2, img.width // 2])
-                lTmp = tr.FindParallelLine(lBC, pt)
-                pt1 = tr.FindCommonPoint(kAB, lTmp)
-                pt2 = tr.FindCommonPoint(kCD, lTmp)
-                if (pt1[0] < pt[0] < pt2[0]) and (pt2[1] < pt[1] < pt1[1]):
-                    img.amPh.am[py, px] = 0.0
-
-        imsup.DisplayAmpImage(img)
-        print(a)
-        print('All done!')
-
     def calcHistogramWithRotation(self):
-        pass
+        # Find center point of the line
+        points = self.pointSets[self.image.numInSeries-1][:2]
+        points = np.array([ CalcRealCoords(const.dimSize, pt) for pt in points ])
+        rotCenter = np.average(points, 0).astype(np.int32)
+        print('rotCenter = {0}'.format(rotCenter))
+
+        # Find direction (angle) of the line
+        # take sign of angle into account!!!
+        dirAngles = FindDirectionAngle(points[0], points[1])
+        print([ imsup.Degrees(da) for da in dirAngles ])
+
+        # Shift image by -center
+        shiftToRotCenter = list(-rotCenter)
+        shiftToRotCenter.reverse()
+        imgShifted = cc.ShiftImage(self.image, shiftToRotCenter)
+        imgShifted = imsup.CreateImageWithBufferFromImage(imgShifted)
+
+        # Rotate image by angle
+        imgRot = tr.RotateImageSki2(imgShifted, imsup.Degrees(-dirAngles[0]))
+        # imgRot = imsup.RotateImage(imgShifted, imsup.Degrees(-dirAngles[0]))
+        imgRot.MoveToCPU()     # imgRot should already be stored in CPU memory
+
+        # Crop fragment whose height = distance between two points
+        ptDiffs = points[0]-points[1]
+        fragHeight = int(np.sqrt(ptDiffs[0] ** 2 + ptDiffs[1] ** 2))
+        fragWidth = fragHeight
+        print('Frag height = {0}'.format(fragHeight))
+        fragCoords = imsup.DetermineCropCoordsForNewWidth(imgRot.width, fragWidth)
+        print('Frag coords = {0}'.format(fragCoords))
+        imgCropped = imsup.CreateImageWithBufferFromImage(imsup.CropImageROICoords(imgRot, fragCoords))
+        imgCropped.MoveToCPU()
+
+        imgList = imsup.ImageList([self.image, imgShifted, imgRot, imgCropped])
+        imgList.UpdateLinks()
+
+        # Calculate projection of intensity and FFT
+        distances = np.arange(0, fragWidth, 1, np.float32)
+        distances *= const.pxWidth
+        intMatrix = np.copy(imgCropped.amPh.am)
+        intProjection = np.sum(intMatrix, 0)      # 0 - horizontal projection, 1 - vertical projection
+        intProjFFT = list(np.fft.fft(intProjection))
+        arrHalf = len(intProjFFT) // 2
+        intProjFFT = np.array(intProjFFT[arrHalf:] + intProjFFT[:arrHalf])
+        intProjFFTReal, intProjFFTImag = np.abs(np.real(intProjFFT)), np.imag(intProjFFT)
+
+        recPxWidth = 1.0 / (intProjection.shape[0] * const.pxWidth)
+        recOrigin = -1.0 / (2.0 * const.pxWidth)
+        recDistances = np.array([ recOrigin + x * recPxWidth for x in range(intProjection.shape[0]) ])
+
+        intProjFFTRealToPlot = imsup.ScaleImage(intProjFFTReal, 0, 10)
+        recDistsToPlot = recDistances * 1e-10     # A^-1
+        self.plotWidget.plot(recDistsToPlot, intProjFFTRealToPlot, 'rec. dist. [1/A]', 'FFT [a.u.]')
+
+        # Rysuj widmo FFT w GUI
+        # Użytkownik zaznacza odpowiednie maksimum
+        # Do piku dopasowywany jest Gauss
+        # Wyznaczana jest odpowiednia stała sieci
+
+        # file1 = open('int_proj.txt', 'w')
+        # for dist, intProj in zip(distances, intProjection):
+        #     file1.write('{0:.2f}\t{1:.2f}\n'.format(dist * 1e10, intProj))
+        # file1.close()
+        #
+        # file2 = open('int_proj_fft.txt', 'w')
+        # for dist, intProj in zip(recDistances, intProjFFTReal):
+        #     file2.write('{0:.2f}\t{1:.2f}\n'.format(dist * 1e-10, intProj))
+        # file2.close()
+
+    def getLatConst(self):
+        latConst = np.abs(1.0 / self.pointMarkedOnPlot[0])
+        self.latConstLabel.label.setText('{0:.2f} A'.format(latConst))
 
     def clearImage(self):
         labToDel = self.display.children()
@@ -259,6 +386,13 @@ def CalcOuterAngle(p1, p2):
 def CalcNewCoords(p1, newCenter):
     p2 = [ px - cx for px, cx in zip(p1, newCenter) ]
     return p2
+
+# --------------------------------------------------------
+
+def FindDirectionAngle(p1, p2):
+    ang1 = np.arctan2(np.abs(p1[0]-p2[0]), np.abs(p1[1]-p2[1]))
+    ang2 = np.pi / 2 - ang1
+    return ang1, ang2
 
 # --------------------------------------------------------
 

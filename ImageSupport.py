@@ -696,6 +696,20 @@ def PadImageBufferToNx512(img, padValue):
 
 #-------------------------------------------------------------------
 
+def CalculateNewWidthAfterRotation(imgWidth, deltaPhi):
+    piBy4 = np.pi / 4
+    imgHeight = imgWidth
+    deltaPhiRad = deltaPhi * np.pi / 180.0
+    rMax = np.sqrt((imgWidth / 2.0) ** 2 + (imgHeight / 2.0) ** 2)
+    if (deltaPhiRad // piBy4 + 1) % 2:
+        angle = piBy4 - (deltaPhiRad % piBy4)
+    else:
+        angle = deltaPhiRad % piBy4
+    rotWidth = int(np.ceil(2 * rMax * np.cos(angle)))
+    return rotWidth
+
+#-------------------------------------------------------------------
+
 def RotateImage(img, deltaPhi):
     mt = img.memType
     img.MoveToGPU()
