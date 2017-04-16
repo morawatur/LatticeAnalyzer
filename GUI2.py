@@ -3,7 +3,6 @@ import sys
 from os import path
 from functools import partial
 import numpy as np
-from skimage import transform as tf
 from PyQt4 import QtGui, QtCore
 import Dm3Reader3 as dm3
 import Constants as const
@@ -15,6 +14,24 @@ from matplotlib.backends.backend_qt4agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt4agg import NavigationToolbar2QT as NavigationToolbar
 import matplotlib.pyplot as plt
 import random
+
+# --------------------------------------------------------
+
+class LineEditWithLabel(QtGui.QWidget):
+    def __init__(self, parent, labText='Label', defaultValue=''):
+        super(LineEditWithLabel, self).__init__(parent)
+        self.label = QtGui.QLabel(labText)
+        self.input = QtGui.QLineEdit(defaultValue)
+        self.initUI()
+
+    def initUI(self):
+        self.input.setMaxLength(10)
+        vbox = QtGui.QVBoxLayout()
+        vbox.setMargin(0)
+        vbox.setSpacing(0)
+        vbox.addWidget(self.label)
+        vbox.addWidget(self.input)
+        self.setLayout(vbox)
 
 # --------------------------------------------------------
 
@@ -45,28 +62,31 @@ class LabelExt(QtGui.QLabel):
         super(LabelExt, self).__init__(parent)
         self.image = image
         self.setImage()
-        self.pointSets = []
+        self.pointSets = [[]]
+        # while image.next is not None:
+        #    self.pointSets.append([])
 
     def paintEvent(self, event):
         super(LabelExt, self).paintEvent(event)
-        dotPen = QtGui.QPen(QtCore.Qt.red)
-        dotPen.setCapStyle(QtCore.Qt.RoundCap)
-        dotPen.setWidth(5)
+        linePen = QtGui.QPen(QtCore.Qt.white)
+        linePen.setCapStyle(QtCore.Qt.RoundCap)
+        linePen.setWidth(2)
         qp = QtGui.QPainter()
         qp.begin(self)
         qp.setRenderHint(QtGui.QPainter.Antialiasing, True)
-        qp.setPen(dotPen)
-        if len(self.pointSets) > 0:
-            for pt in self.pointSets[self.image.numInSeries - 1]:
-                qpt = QtCore.QPoint(pt[0], pt[1])
-                qp.drawPoint(qpt)
+        qp.setPen(linePen)
+        imgIdx = self.image.numInSeries - 1
+        for pt in self.pointSets[imgIdx]:
+            rect = QtCore.QRect(pt[0]-4, pt[1]-4, 9, 9)
+            qp.drawArc(rect, 0, 16*360)
+        for pt1, pt2 in zip(self.pointSets[imgIdx][:-1], self.pointSets[imgIdx][1:]):
+            line = QtCore.QLine(pt1[0], pt1[1], pt2[0], pt2[1])
+            qp.drawLine(line)
         qp.end()
 
     def mouseReleaseEvent(self, QMouseEvent):
         pos = QMouseEvent.pos()
         currPos = [pos.x(), pos.y()]
-        if len(self.pointSets) < self.image.numInSeries:
-            self.pointSets.append([])
         self.pointSets[self.image.numInSeries - 1].append(currPos)
         self.repaint()
 
@@ -84,7 +104,7 @@ class LabelExt(QtGui.QLabel):
         if newImage is not None:
             newImage.ReIm2AmPh()
             self.image = newImage
-            if toNext:
+            if len(self.pointSets) < self.image.numInSeries:
                 self.pointSets.append([])
             self.setImage()
 
@@ -141,6 +161,7 @@ class LatticeAnalyzerWidget(QtGui.QWidget):
         image = LoadImageSeriesFromFirstFile(imagePath)
         self.display = LabelExt(self, image)
         self.plotWidget = PlotWidget()
+        self.intWidthInput = LineEditWithLabel(self, 'Integration width [px]', '50')
         self.latConstLabel = LabelWithLabel(self, 'Lattice constant', '0.0 A')
         self.initUI()
 
@@ -153,18 +174,19 @@ class LatticeAnalyzerWidget(QtGui.QWidget):
 
         prevButton = QtGui.QPushButton('Prev', self)
         nextButton = QtGui.QPushButton('Next', self)
+        startButton = QtGui.QPushButton('Start', self)      # Get freq. distribution (FFT)
         clearButton = QtGui.QPushButton('Clear', self)
         exportButton = QtGui.QPushButton('Export', self)
-        startButton = QtGui.QPushButton('Start', self)      # Get freq. distribution (FFT)
         getLatConstButton = QtGui.QPushButton('Get lattice constant', self)
 
         prevButton.clicked.connect(self.goToPrevImage)
         nextButton.clicked.connect(self.goToNextImage)
+        startButton.clicked.connect(self.calcHistogramWithRotation)
         clearButton.clicked.connect(self.clearImage)
         exportButton.clicked.connect(self.exportImage)
-        startButton.clicked.connect(self.calcHistogramWithRotation)
         getLatConstButton.clicked.connect(self.getLatConst)
 
+        self.intWidthInput.setFixedHeight(1.5 * startButton.height())
         self.latConstLabel.setFixedHeight(100)
 
         hbox_nav = QtGui.QHBoxLayout()
@@ -172,9 +194,10 @@ class LatticeAnalyzerWidget(QtGui.QWidget):
         hbox_nav.addWidget(nextButton)
 
         vbox_opt = QtGui.QVBoxLayout()
+        vbox_opt.addWidget(self.intWidthInput)
+        vbox_opt.addWidget(startButton)
         vbox_opt.addWidget(clearButton)
         vbox_opt.addWidget(exportButton)
-        vbox_opt.addWidget(startButton)
         vbox_opt.addWidget(getLatConstButton)
 
         vbox_panel = QtGui.QVBoxLayout()
@@ -213,9 +236,10 @@ class LatticeAnalyzerWidget(QtGui.QWidget):
         print('rotCenter = {0}'.format(rotCenter))
 
         # Find direction (angle) of the line
-        # take sign of angle into account!!!
-        dirAngles = FindDirectionAngle(points[0], points[1])
-        print([ imsup.Degrees(da) for da in dirAngles ])
+        dirInfo = FindDirectionAngles(points[0], points[1])
+        dirAngle = imsup.Degrees(dirInfo[0])
+        projDir = dirInfo[2]
+        print('dirAngle = {0:.2f} deg'.format(dirAngle))
 
         # Shift image by -center
         shiftToRotCenter = list(-rotCenter)
@@ -224,8 +248,8 @@ class LatticeAnalyzerWidget(QtGui.QWidget):
         imgShifted = imsup.CreateImageWithBufferFromImage(imgShifted)
 
         # Rotate image by angle
-        imgRot = tr.RotateImageSki2(imgShifted, imsup.Degrees(-dirAngles[0]))
-        # imgRot = imsup.RotateImage(imgShifted, imsup.Degrees(-dirAngles[0]))
+        imgRot = tr.RotateImageSki2(imgShifted, dirAngle)
+        # imgRot = imsup.RotateImage(imgShifted, dirAngle)
         imgRot.MoveToCPU()     # imgRot should already be stored in CPU memory
 
         # Crop fragment whose height = distance between two points
@@ -245,7 +269,8 @@ class LatticeAnalyzerWidget(QtGui.QWidget):
         distances = np.arange(0, fragWidth, 1, np.float32)
         distances *= const.pxWidth
         intMatrix = np.copy(imgCropped.amPh.am)
-        intProjection = np.sum(intMatrix, 0)      # 0 - horizontal projection, 1 - vertical projection
+        print(projDir)
+        intProjection = np.sum(intMatrix, projDir)      # 0 - horizontal projection, 1 - vertical projection
         intProjFFT = list(np.fft.fft(intProjection))
         arrHalf = len(intProjFFT) // 2
         intProjFFT = np.array(intProjFFT[arrHalf:] + intProjFFT[:arrHalf])
@@ -378,10 +403,24 @@ def CalcNewCoords(p1, newCenter):
 
 # --------------------------------------------------------
 
-def FindDirectionAngle(p1, p2):
-    ang1 = np.arctan2(np.abs(p1[0]-p2[0]), np.abs(p1[1]-p2[1]))
+def FindDirectionAngles(p1, p2):
+    pt1 = p1[:] if p1[0] < p2[0] else p2[:]
+    pt2 = p1[:] if p1[0] > p2[0] else p2[:]
+    print(pt1, pt2)
+    dx = np.abs(pt2[0] - pt1[0])
+    dy = np.abs(pt2[1] - pt1[1])
+    sign = 1 if pt2[1] < pt1[1] else -1
+    projDir = 0         # projection on x axis
+    if dx > dy:
+        sign *= -1
+        projDir = 1     # projection on y axis
+    diff1 = dx if dx < dy else dy
+    diff2 = dx if dx > dy else dy
+    ang1 = np.arctan2(diff1, diff2)
     ang2 = np.pi / 2 - ang1
-    return ang1, ang2
+    ang1 *= sign
+    ang2 *= (-sign)
+    return ang1, ang2, projDir
 
 # --------------------------------------------------------
 
