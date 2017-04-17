@@ -330,6 +330,26 @@ def SavePhaseImage(img, fPath, log=False):
 
 # -------------------------------------------------------------------
 
+# simple crop function
+# does calculations on CPU and returns fragment in CPU memory
+def CropImgAmpFragment(img, coords):
+    dt = img.cmpRepr
+    mt = img.memType
+    img.ReIm2AmPh()
+    img.MoveToCPU()
+
+    fragHeight = coords[3] - coords[1]
+    fragWidth = coords[2] - coords[0]
+    fragImg = ImageWithBuffer(fragHeight, fragWidth, Image.cmp['CAP'], Image.mem['CPU'])
+    fragImg.amPh.am[:] = img.amPh.am[coords[1]:coords[3], coords[0]:coords[2]]
+    fragImg.UpdateBuffer()
+
+    img.ChangeMemoryType(mt)
+    img.ChangeComplexRepr(dt)
+    return fragImg
+
+# -------------------------------------------------------------------
+
 def CropImageROICoords(img, coords):
     roiHeight = coords[3] - coords[1]
     roiWidth = coords[2] - coords[0]
@@ -530,6 +550,14 @@ def DetermineCropCoords(width, height, shift):
 def DetermineCropCoordsForNewWidth(oldWidth, newWidth):
     origX = (oldWidth - newWidth) // 2
     cropCoords = [ origX ] * 2 + [ origX + newWidth ] * 2
+    return cropCoords
+
+#-------------------------------------------------------------------
+
+def DetermineCropCoordsForNewDims(oldWidth, oldHeight, newWidth, newHeight):
+    origX = (oldWidth - newWidth) // 2
+    origY = (oldHeight - newHeight) // 2
+    cropCoords = [ origX, origY, origX + newWidth, origY + newHeight ]
     return cropCoords
 
 #-------------------------------------------------------------------
