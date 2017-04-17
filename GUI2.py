@@ -76,12 +76,17 @@ class LabelExt(QtGui.QLabel):
         qp.setRenderHint(QtGui.QPainter.Antialiasing, True)
         qp.setPen(linePen)
         imgIdx = self.image.numInSeries - 1
+        intWidth = int(self.parent().intWidthInput.input.text())
         for pt in self.pointSets[imgIdx]:
             rect = QtCore.QRect(pt[0]-4, pt[1]-4, 9, 9)
             qp.drawArc(rect, 0, 16*360)
         for pt1, pt2 in zip(self.pointSets[imgIdx][:-1], self.pointSets[imgIdx][1:]):
             line = QtCore.QLine(pt1[0], pt1[1], pt2[0], pt2[1])
             qp.drawLine(line)
+            rect = CalcRectVertices(pt1, pt2, intWidth)
+            for vert1, vert2 in zip(rect, rect[1:] + [rect[0]]):
+                line = QtCore.QLine(vert1[0], vert1[1], vert2[0], vert2[1])
+                qp.drawLine(line)
         qp.end()
 
     def mouseReleaseEvent(self, QMouseEvent):
@@ -139,6 +144,7 @@ class PlotWidget(QtGui.QWidget):
 
     def plot(self, dataX, dataY, xlab='x', ylab='y'):
         self.figure.clear()
+        self.markedPoint = None
         plt.xlabel(xlab)
         plt.ylabel(ylab)
         plt.axis([ min(dataX)-0.5, max(dataX)+0.5, min(dataY)-0.5, max(dataY)+0.5 ])
@@ -254,15 +260,21 @@ class LatticeAnalyzerWidget(QtGui.QWidget):
 
         # Crop fragment whose height = distance between two points
         ptDiffs = points[0]-points[1]
-        fragHeight = int(np.sqrt(ptDiffs[0] ** 2 + ptDiffs[1] ** 2))
-        fragWidth = fragHeight
-        print('Frag height = {0}'.format(fragHeight))
-        fragCoords = imsup.DetermineCropCoordsForNewWidth(imgRot.width, fragWidth)
-        print('Frag coords = {0}'.format(fragCoords))
-        imgCropped = imsup.CreateImageWithBufferFromImage(imsup.CropImageROICoords(imgRot, fragCoords))
-        imgCropped.MoveToCPU()
+        fragDim1 = int(np.sqrt(ptDiffs[0] ** 2 + ptDiffs[1] ** 2))
+        fragDim2 = int(self.intWidthInput.input.text())
+        if projDir == 0:
+            fragWidth, fragHeight = fragDim1, fragDim2
+        else:
+            fragWidth, fragHeight = fragDim2, fragDim1
 
-        imgList = imsup.ImageList([self.display.image, imgShifted, imgRot, imgCropped])
+        fragCoords = imsup.DetermineCropCoordsForNewDims(imgRot.width, imgRot.height, fragWidth, fragHeight)
+        print('Frag dims = {0}, {1}'.format(fragWidth, fragHeight))
+        print('Frag coords = {0}'.format(fragCoords))
+        imgCropped = imsup.CropImgAmpFragment(imgRot, fragCoords)
+
+        squareFragCoords = imsup.DetermineCropCoordsForNewWidth(imgRot.width, fragDim1)
+        imgCroppedToDisp = imsup.CropImgAmpFragment(imgRot, squareFragCoords)
+        imgList = imsup.ImageList([self.display.image, imgShifted, imgRot, imgCroppedToDisp])
         imgList.UpdateLinks()
 
         # Calculate projection of intensity and FFT
@@ -404,16 +416,15 @@ def CalcNewCoords(p1, newCenter):
 # --------------------------------------------------------
 
 def FindDirectionAngles(p1, p2):
-    pt1 = p1[:] if p1[0] < p2[0] else p2[:]
-    pt2 = p1[:] if p1[0] > p2[0] else p2[:]
-    print(pt1, pt2)
-    dx = np.abs(pt2[0] - pt1[0])
-    dy = np.abs(pt2[1] - pt1[1])
-    sign = 1 if pt2[1] < pt1[1] else -1
-    projDir = 0         # projection on x axis
+    lpt = p1[:] if p1[0] < p2[0] else p2[:]     # left point
+    rpt = p1[:] if p1[0] > p2[0] else p2[:]     # right point
+    dx = np.abs(rpt[0] - lpt[0])
+    dy = np.abs(rpt[1] - lpt[1])
+    sign = 1 if rpt[1] < lpt[1] else -1
+    projDir = 1         # projection on y axis
     if dx > dy:
         sign *= -1
-        projDir = 1     # projection on y axis
+        projDir = 0     # projection on x axis
     diff1 = dx if dx < dy else dy
     diff2 = dx if dx > dy else dy
     ang1 = np.arctan2(diff1, diff2)
@@ -421,6 +432,28 @@ def FindDirectionAngles(p1, p2):
     ang1 *= sign
     ang2 *= (-sign)
     return ang1, ang2, projDir
+
+# --------------------------------------------------------
+
+def CalcRectVertices(p1, p2, rectWidth):
+    dirInfo = FindDirectionAngles(p1, p2)
+    dirAngle = np.abs(dirInfo[0])
+    projDir = dirInfo[2]
+    d1 = np.abs((rectWidth / 2.0) * np.sin(dirAngle))
+    d2 = np.abs((rectWidth / 2.0) * np.cos(dirAngle))
+    if projDir == 0:
+        dx, dy = d1, d2
+    else:
+        dx, dy = d2, d1
+    lpt = p1[:] if p1[0] < p2[0] else p2[:]
+    rpt = p1[:] if p1[0] > p2[0] else p2[:]
+    vect = np.array([dx, dy]).astype(np.int32)
+    p1 = np.array(p1).astype(np.int32)
+    p2 = np.array(p2).astype(np.int32)
+    if rpt[1] > lpt[1]: vect[1] *= -1
+    rect = [ p1-vect, p1+vect, p2+vect, p2-vect ]
+    rect = [ list(pt) for pt in rect ]
+    return rect
 
 # --------------------------------------------------------
 
