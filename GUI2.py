@@ -76,7 +76,7 @@ class LabelExt(QtGui.QLabel):
         qp.setRenderHint(QtGui.QPainter.Antialiasing, True)
         qp.setPen(linePen)
         imgIdx = self.image.numInSeries - 1
-        intWidth = int(self.parent().intWidthInput.input.text())
+        intWidth = int(int(self.parent().intWidthInput.input.text()) * (self.width() / self.image.width))
         for pt in self.pointSets[imgIdx]:
             rect = QtCore.QRect(pt[0]-4, pt[1]-4, 9, 9)
             qp.drawArc(rect, 0, 16*360)
@@ -181,14 +181,18 @@ class LatticeAnalyzerWidget(QtGui.QWidget):
         prevButton = QtGui.QPushButton('Prev', self)
         nextButton = QtGui.QPushButton('Next', self)
         startButton = QtGui.QPushButton('Start', self)      # Get freq. distribution (FFT)
+        zoomButton = QtGui.QPushButton('Zoom', self)
         clearButton = QtGui.QPushButton('Clear', self)
+        removeButton = QtGui.QPushButton('Delete', self)
         exportButton = QtGui.QPushButton('Export', self)
         getLatConstButton = QtGui.QPushButton('Get lattice constant', self)
 
         prevButton.clicked.connect(self.goToPrevImage)
         nextButton.clicked.connect(self.goToNextImage)
         startButton.clicked.connect(self.calcHistogramWithRotation)
+        zoomButton.clicked.connect(self.zoomImage)
         clearButton.clicked.connect(self.clearImage)
+        # removeButton.clicked.connect(self.removeImage)
         exportButton.clicked.connect(self.exportImage)
         getLatConstButton.clicked.connect(self.getLatConst)
 
@@ -202,7 +206,9 @@ class LatticeAnalyzerWidget(QtGui.QWidget):
         vbox_opt = QtGui.QVBoxLayout()
         vbox_opt.addWidget(self.intWidthInput)
         vbox_opt.addWidget(startButton)
+        vbox_opt.addWidget(zoomButton)
         vbox_opt.addWidget(clearButton)
+        vbox_opt.addWidget(removeButton)
         vbox_opt.addWidget(exportButton)
         vbox_opt.addWidget(getLatConstButton)
 
@@ -233,11 +239,35 @@ class LatticeAnalyzerWidget(QtGui.QWidget):
     def goToNextImage(self):
         self.display.changeImage(toNext=True)
 
+    # prowizorka
+    def zoomImage(self):
+        imgIdx = self.display.image.numInSeries - 1
+        pt1, pt2 = self.display.pointSets[imgIdx][:2]
+        lpt = pt1[:] if pt1[0] < pt2[0] else pt2[:]     # left point
+        rpt = pt1[:] if pt1[0] > pt2[0] else pt2[:]     # right point
+        currImage = self.display.image
+        lpt = CalcRealTLCoordsForPaddedImage(self.display.image.width, lpt)
+        rpt = CalcRealTLCoordsForPaddedImage(self.display.image.width, rpt)
+        width = np.abs(rpt[0] - lpt[0])
+        height = np.abs(rpt[1] - lpt[1])
+        biggerDim = width if width > height else height
+        zoomCoords = [lpt[0], lpt[1], lpt[0] + biggerDim, lpt[1] + biggerDim]
+        # a moze uzyc RescaleSkiImage?
+        zoom = imsup.CropImgAmpFragment(self.display.image, zoomCoords)
+        zoom.prev = currImage
+        if currImage.next is not None:
+            zoom.next = currImage.next
+            currImage.next.prev = zoom
+        currImage.next = zoom
+        self.goToNextImage()
+        self.clearImage()
+
     def calcHistogramWithRotation(self):
         # Find center point of the line
         imgIdx = self.display.image.numInSeries - 1
         points = self.display.pointSets[imgIdx][:2]
-        points = np.array([ CalcRealCoords(const.dimSize, pt) for pt in points ])
+        # points = np.array([ CalcRealCoords(self.display.image.width, pt) for pt in points ])
+        points = np.array([ CalcRealMidCoordsForPaddedImage(self.display.image.width, pt) for pt in points ])
         rotCenter = np.average(points, 0).astype(np.int32)
         print('rotCenter = {0}'.format(rotCenter))
 
@@ -272,10 +302,10 @@ class LatticeAnalyzerWidget(QtGui.QWidget):
         print('Frag coords = {0}'.format(fragCoords))
         imgCropped = imsup.CropImgAmpFragment(imgRot, fragCoords)
 
-        squareFragCoords = imsup.DetermineCropCoordsForNewWidth(imgRot.width, fragDim1)
-        imgCroppedToDisp = imsup.CropImgAmpFragment(imgRot, squareFragCoords)
-        imgList = imsup.ImageList([self.display.image, imgShifted, imgRot, imgCroppedToDisp])
-        imgList.UpdateLinks()
+        # squareFragCoords = imsup.DetermineCropCoordsForNewWidth(imgRot.width, fragDim1)
+        # imgCroppedToDisp = imsup.CropImgAmpFragment(imgRot, squareFragCoords)
+        # imgList = imsup.ImageList([self.display.image, imgShifted, imgRot, imgCroppedToDisp])
+        # imgList.UpdateLinks()
 
         # Calculate projection of intensity and FFT
         distances = np.arange(0, fragWidth, 1, np.float32)
@@ -288,9 +318,12 @@ class LatticeAnalyzerWidget(QtGui.QWidget):
         intProjFFT = np.array(intProjFFT[arrHalf:] + intProjFFT[:arrHalf])
         intProjFFTReal, intProjFFTImag = np.abs(np.real(intProjFFT)), np.imag(intProjFFT)
 
+        numOfNegDists = arrHalf
+        if intProjection.shape[0] % 2:
+            numOfNegDists += 1
         recPxWidth = 1.0 / (intProjection.shape[0] * const.pxWidth)
-        recOrigin = -1.0 / (2.0 * const.pxWidth)
-        recDistances = np.array([ recOrigin + x * recPxWidth for x in range(intProjection.shape[0]) ])
+        recOrigin = -numOfNegDists * recPxWidth
+        recDistances = np.array([recOrigin + x * recPxWidth for x in range(intProjection.shape[0])])
 
         intProjFFTRealToPlot = imsup.ScaleImage(intProjFFTReal, 0, 10)
         recDistsToPlot = recDistances * 1e-10     # A^-1
@@ -305,6 +338,16 @@ class LatticeAnalyzerWidget(QtGui.QWidget):
         imgIdx = self.display.image.numInSeries - 1
         self.display.pointSets[imgIdx][:] = []
         self.display.repaint()
+
+    # def removeImage(self):
+    #     self.clearImage()
+    #     currImg = self.display.image
+    #     prevImg = currImg.prev
+    #     nextImg = currImg.next
+    #     prevImg.next = nextImg
+    #     nextImg.prev = prevImg
+    #     nextImg.numInSeries -= 1
+    #     del currImg
 
     def exportImage(self):
         fName = 'img{0}.png'.format(self.display.image.numInSeries)
@@ -322,11 +365,12 @@ def LoadImageSeriesFromFirstFile(imgPath):
     while path.isfile(imgPath):
         print('Reading file "' + imgPath + '"')
         imgData = dm3.ReadDm3File(imgPath)
-        imgMatrix = imsup.PrepareImageMatrix(imgData, const.dimSize)
-        img = imsup.ImageWithBuffer(const.dimSize, const.dimSize, imsup.Image.cmp['CAP'], imsup.Image.mem['CPU'])
+        imgDimSize = np.sqrt(len(imgData))
+        imgMatrix = imsup.PrepareImageMatrix(imgData, imgDimSize)
+        img = imsup.ImageWithBuffer(imgDimSize, imgDimSize, imsup.Image.cmp['CAP'], imsup.Image.mem['CPU'])
         img.LoadAmpData(np.sqrt(imgMatrix).astype(np.float32))
         # ---
-        # imsup.RemovePixelArtifacts(img, const.minPxThreshold, const.maxPxThreshold)
+        imsup.RemovePixelArtifacts(img, const.minPxThreshold, const.maxPxThreshold)
         img.UpdateBuffer()
         # ---
         img.numInSeries = imgNum
@@ -370,6 +414,16 @@ def CalcRealCoordsForSetOfPoints(imgWidth, points):
 
 # --------------------------------------------------------
 
+def CalcRealMidCoordsForPaddedImage(imgWidth, dispCoords):
+    dispWidth = const.ccWidgetDim
+    padImgWidthReal = np.ceil(imgWidth / 512.0) * 512.0
+    pad = (padImgWidthReal - imgWidth) / 2.0
+    factor = padImgWidthReal / dispWidth
+    realCoords = [ int(dc * factor - pad - imgWidth // 2) for dc in dispCoords ]
+    return realCoords
+
+# --------------------------------------------------------
+
 def CalcRealTLCoordsForPaddedImage(imgWidth, dispCoords):
     dispWidth = const.ccWidgetDim
     padImgWidthReal = np.ceil(imgWidth / 512.0) * 512.0
@@ -382,10 +436,10 @@ def CalcRealTLCoordsForPaddedImage(imgWidth, dispCoords):
 
 # --------------------------------------------------------
 
-def CalcDispCoords(dispWidth, realCoords):
-    imgWidth = const.dimSize
+def CalcDispCoords(imgWidth, realCoords):
+    dispWidth = const.ccWidgetDim
     factor = dispWidth / imgWidth
-    dispCoords = [ (rc * factor) + const.ccWidgetDim // 2 for rc in realCoords ]
+    dispCoords = [ (rc * factor) + dispWidth // 2 for rc in realCoords ]
     return dispCoords
 
 # --------------------------------------------------------
