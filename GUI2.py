@@ -192,7 +192,7 @@ class LatticeAnalyzerWidget(QtGui.QWidget):
         startButton.clicked.connect(self.calcHistogramWithRotation)
         zoomButton.clicked.connect(self.zoomImage)
         clearButton.clicked.connect(self.clearImage)
-        # removeButton.clicked.connect(self.removeImage)
+        removeButton.clicked.connect(self.removeImage)
         exportButton.clicked.connect(self.exportImage)
         getLatConstButton.clicked.connect(self.getLatConst)
 
@@ -325,6 +325,7 @@ class LatticeAnalyzerWidget(QtGui.QWidget):
         recOrigin = -numOfNegDists * recPxWidth
         recDistances = np.array([recOrigin + x * recPxWidth for x in range(intProjection.shape[0])])
 
+        intProjFFTReal[arrHalf - 4:arrHalf + 4] = 0.0
         intProjFFTRealToPlot = imsup.ScaleImage(intProjFFTReal, 0, 10)
         recDistsToPlot = recDistances * 1e-10     # A^-1
         self.plotWidget.plot(recDistsToPlot, intProjFFTRealToPlot, 'rec. dist. [1/A]', 'FFT [a.u.]')
@@ -339,15 +340,20 @@ class LatticeAnalyzerWidget(QtGui.QWidget):
         self.display.pointSets[imgIdx][:] = []
         self.display.repaint()
 
-    # def removeImage(self):
-    #     self.clearImage()
-    #     currImg = self.display.image
-    #     prevImg = currImg.prev
-    #     nextImg = currImg.next
-    #     prevImg.next = nextImg
-    #     nextImg.prev = prevImg
-    #     nextImg.numInSeries -= 1
-    #     del currImg
+    # should be tested
+    def removeImage(self):
+        self.clearImage()
+        currImg = self.display.image
+        prevImg = currImg.prev
+        nextImg = currImg.next
+        if prevImg is not None:
+            prevImg.next = nextImg
+        if nextImg is not None:
+            nextImg.prev = prevImg
+            nextImg.numInSeries -= 1
+        del currImg
+        self.display.image = prevImg
+        self.display.setImage()
 
     def exportImage(self):
         fName = 'img{0}.png'.format(self.display.image.numInSeries)
@@ -381,6 +387,7 @@ def LoadImageSeriesFromFirstFile(imgPath):
         if imgNum == 10:
             imgNumTextNew = imgNumTextNew[1:]
         imgPath = RReplace(imgPath, imgNumText, imgNumTextNew, 1)
+        print(imgPath)
         imgNumText = imgNumTextNew
 
     imgList.UpdateLinks()
